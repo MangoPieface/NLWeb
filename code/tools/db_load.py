@@ -168,7 +168,11 @@ async def fetch_url(url: str) -> Tuple[str, Optional[str]]:
     print(f"Fetching content from URL: {url}")
     
     try:
-        async with aiohttp.ClientSession() as session:
+        # async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(
+            max_line_size=32_768,      # 32 KB per header line
+            max_field_size=32_768      # 32 KB per header field
+        ) as session:
             async with session.get(url) as response:
                 if response.status != 200:
                     raise ValueError(f"Failed to fetch URL {url}: HTTP {response.status}")
@@ -847,11 +851,11 @@ async def loadJsonToDB(file_path: str, site: str, batch_size: int = 100, delete_
                     
                     if batch_docs and batch_texts:
                         try:
-                            print(f"Computing embeddings for batch of {len(batch_texts)} texts")
+                            print(f"***START*** Computing embeddings for batch of {len(batch_texts)} texts")
                             
                             # Compute embeddings for the batch
                             embeddings = await batch_get_embeddings(batch_texts, provider, model)
-                            
+                            print(f"***DONE*** Computing embeddings for batch of {len(batch_texts)} texts")
                             # Add embeddings to documents
                             docs_with_embeddings = []
                             
