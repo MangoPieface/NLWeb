@@ -92,7 +92,7 @@ class MilvusVectorClient(RetrievalClientBase):
                 logger.debug(f"Creating Milvus client for {client_key}")
                 
                 # Initialize the client
-                self._milvus_clients[client_key] = MilvusClient(self.uri, self.token)
+                self._milvus_clients[client_key] = MilvusClient(uri=self.uri, token=self.token)
                 logger.info(f"Created Milvus client for {client_key} at {self.uri}")
                 
                 # Test client connection with a simple search

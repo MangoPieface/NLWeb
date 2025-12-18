@@ -5,7 +5,7 @@
 Simplified WHO ranking for site selection.
 """
 
-from core.utils.utils import log
+from core.utils.utils import log, build_nlweb_gateway_url
 from core.llm import ask_llm
 import asyncio
 import json
@@ -16,26 +16,36 @@ from core.schemas import create_assistant_result
 
 logger = get_configured_logger("who_ranking_engine")
 
+DEBUG_PRINT = False
 
 class WhoRanking:
+
 
     EARLY_SEND_THRESHOLD = 59
     NUM_RESULTS_TO_SEND = 10
 
-    def __init__(self, handler, items, level="low"):
+    def __init__(self, handler, items, level="high"): # default to low level for WHO ranking
         logger.info(f"Initializing WHO Ranking with {len(items)} items")
         self.handler = handler
-        self.level = level  # default to high level for WHO ranking
+        self.level = level
         self.items = items
         self.num_results_sent = 0
         self.rankedAnswers = []
     
+
+
     def get_ranking_prompt(self, query, site_description):
         """Construct the WHO ranking prompt with the given query and site description."""
         prompt = f"""Assign a score between 0 and 100 to the following site based 
         the likelihood that the site will contain an answer to the user's question.
+       
+        First think about the kind of thing the user is seeking and then verify that the 
+        site is primarily focussed on that kind of thing.
+
         If the user is looking to buy a product, the site should sell the product, not 
-        just have useful information. 
+        just have useful information.
+        If the user is looking for information, the site should focus on that kind of information.
+
 
 The user's question is: {query}
 
@@ -135,6 +145,7 @@ The site's description is: {site_description}
         max_results = getattr(self.handler, 'max_results', self.NUM_RESULTS_TO_SEND)
         json_results = []
 
+
         for result in answers:
             # Stop if we've already sent enough
             if self.num_results_sent + len(json_results) >= max_results:
@@ -147,12 +158,23 @@ The site's description is: {site_description}
             schema_obj = result.get("schema_object", {})
             site_type = schema_obj.get("@type", "Website")
 
+            # Get the optimized site-specific query (for display)
+            site_query = result["ranking"].get("query", self.handler.query)
+
+            # Build the complete URL with nlweb_gateway using the ORIGINAL user query
+            complete_url = build_nlweb_gateway_url(
+                result["url"],
+                self.handler.query,  # Always use original user query in URL
+                site_type
+            )
+
             result_item = {
                 "@type": site_type,  # Use the actual site type
-                "url": result["url"],
+                "url": complete_url,  # Use the complete URL with gateway
                 "name": result["name"],
                 "score": result["ranking"]["score"],
             }
+
 
             # Include description if available
             if "description" in result["ranking"]:
@@ -164,6 +186,10 @@ The site's description is: {site_description}
             else:
                 # Fallback to original query if no custom query provided
                 result_item["query"] = self.handler.query
+
+
+            # Include optimized query field (for display purposes)
+            result_item["query"] = site_query
 
             json_results.append(result_item)
             result["sent"] = True

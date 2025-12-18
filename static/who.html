@@ -263,7 +263,7 @@
   <script type="module">
     import { ChatUICommon } from '/static/chat-ui-common.js';
     import { JsonRenderer } from '/static/json-renderer.js';
-    import { SAMPLE_QUERIES } from '/static/sample-queries.js';
+    import { SAMPLE_QUERIES } from '/static/sample-who-queries.js';
 
     class WhoQueryInterface {
       constructor() {
@@ -275,7 +275,6 @@
         this.eventSource = null;
         this.allResults = []; // Accumulate all results for re-sorting
         this.aiResponses = []; // Keep AI responses separate
-        this.queryHistory = []; // Track query history for context
 
         // Initialize UI helper
         this.uiHelper = new ChatUICommon({
@@ -292,11 +291,14 @@
       }
 
       initializeSampleQueries() {
-        // Generate the sample queries HTML from the imported array
+        // Randomly select 25 queries from the full list
+        const selectedQueries = this.getRandomQueries(SAMPLE_QUERIES, 25);
+
+        // Generate the sample queries HTML from the selected queries
         const sampleQueriesHtml = `
           <div class="sample-queries-list">
-            <p style="color: #999; margin-bottom: 16px; font-size: 0.9rem;">Try these example queries:</p>
-            ${SAMPLE_QUERIES.map(query => `
+            <p style="color: #999; margin-bottom: 16px; font-size: 0.9rem;">Try these example queries (randomly selected from ${SAMPLE_QUERIES.length} total):</p>
+            ${selectedQueries.map(query => `
               <div class="sample-query-item" data-query="${query}">
                 ${query.charAt(0).toUpperCase() + query.slice(1)}
               </div>
@@ -306,6 +308,16 @@
 
         // Set the initial content of results container
         this.resultsContainer.innerHTML = sampleQueriesHtml;
+      }
+
+      getRandomQueries(queries, count) {
+        // Fisher-Yates shuffle to get random selection
+        const shuffled = [...queries];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled.slice(0, count);
       }
 
       initializeEventListeners() {
@@ -332,34 +344,18 @@
         if (!query || this.isProcessing) return;
 
         this.isProcessing = true;
+        this.hasReceivedBeginMessage = false;  // Track if we received begin-nlweb-response
+        this.hasReceivedEndMessage = false;    // Track if we received end-nlweb-response
         this.queryButton.disabled = true;
         this.queryButton.textContent = 'Searching...';
-        
-        // Add current query to history (will be added after successful response)
-        const currentQuery = query;
-        
-        // Show query in results with previous queries for context
+
+        // Show query in results
         this.resultsContainer.innerHTML = '';
-        
-        // Display conversation history
-        if (this.queryHistory.length > 0) {
-          const historyDiv = document.createElement('div');
-          historyDiv.style.cssText = 'margin-bottom: 20px; padding: 10px; background: #f9f9f9; border-radius: 8px;';
-          
-          this.queryHistory.forEach((q, idx) => {
-            const queryDiv = document.createElement('div');
-            queryDiv.style.cssText = 'margin-bottom: 8px; color: #666;';
-            queryDiv.innerHTML = `<strong>Previous Q${idx + 1}:</strong> ${this.escapeHtml(q)}`;
-            historyDiv.appendChild(queryDiv);
-          });
-          
-          this.resultsContainer.appendChild(historyDiv);
-        }
-        
+
         // Display current query
         const currentQueryDiv = document.createElement('div');
         currentQueryDiv.style.cssText = 'margin-bottom: 20px; padding: 12px; background: #e3f2fd; border-radius: 8px; font-weight: 500;';
-        currentQueryDiv.innerHTML = `<strong>Current Query:</strong> ${this.escapeHtml(currentQuery)}`;
+        currentQueryDiv.innerHTML = `<strong>Current Query:</strong> ${this.escapeHtml(query)}`;
         this.resultsContainer.appendChild(currentQueryDiv);
         
         // Add loading indicator
@@ -389,11 +385,10 @@
           const debugParams = new URLSearchParams(window.location.search);
           const queryObj = Object.fromEntries(debugParams.entries());
 
-          // Create URL with query parameters including previous queries
+          // Create URL with query parameters
           const params = new URLSearchParams({
             query: query,
-            streaming: 'true',  // Use streaming mode
-            ...queryObj  // Preserve other URL params (like retrieval, db, etc.)
+            streaming: 'true'  // Use streaming mode
           });
           
           // Add previous queries for context (limit to last 3 queries)
@@ -427,8 +422,7 @@
               
               // Handle different message types
               if (data.message_type === 'complete') {
-                // Stream is complete - add query to history
-                this.queryHistory.push(currentQuery);
+                // Stream is complete
                 // Clear the input for next query
                 this.queryInput.value = '';
                 this.cleanup();  // Use cleanup to properly reset state
@@ -456,9 +450,16 @@
           };
           
           this.eventSource.onerror = (error) => {
-            console.error('EventSource error:', error);
-            this.handleError('Connection error occurred');
-            this.eventSource.close();
+            // Only show error if we started receiving data but didn't get a proper end message
+            // If we never got a begin message, it's a connection failure
+            // If we got a begin but no end, the stream was interrupted
+            if (!this.hasReceivedBeginMessage || (this.hasReceivedBeginMessage && !this.hasReceivedEndMessage)) {
+              console.error('EventSource error:', error);
+              this.handleError('Connection error occurred');
+            }
+            if (this.eventSource) {
+              this.eventSource.close();
+            }
             this.isProcessing = false;  // Reset processing flag
             this.queryButton.disabled = false;
             this.queryButton.textContent = 'Search';
@@ -479,9 +480,17 @@
           return;
         }
 
-        if (message.message_type === 'complete' || message.message_type === 'end-nlweb-response') {
+        if (message.message_type === 'begin-nlweb-response') {
+          this.hasReceivedBeginMessage = true;
+          console.log('Received begin-nlweb-response');
+          return;
+        }
+
+        if (message.message_type === 'end-nlweb-response') {
+          this.hasReceivedEndMessage = true;
+          console.log('Received end-nlweb-response');
           this.cleanup();
-          
+
           // Check if no results were received
           if (this.allResults.length === 0 && this.aiResponses.length === 0) {
             this.resultsContainer.innerHTML = `
@@ -598,106 +607,27 @@
           if (titleElement) {
             titleElement.insertBefore(rankSpan, titleElement.firstChild);
           }
-          
-          // Add custom query display if present
-          if (item.query) {
-            const queryDiv = document.createElement('div');
-            queryDiv.className = 'site-specific-query';
-            queryDiv.style.cssText = `
-              margin-top: 8px;
-              padding: 8px 12px;
-              background: #e8f5e9;
-              border-left: 3px solid #4caf50;
-              border-radius: 4px;
-              font-size: 0.9em;
-              color: #2e7d32;
-            `;
-            queryDiv.innerHTML = `
-              <strong>Site-specific query:</strong> "${this.escapeHtml(item.query)}"
-            `;
-            
-            // Insert after the description/snippet
-            const descElement = itemElement.querySelector('.item-description, .json-item-description, .description, .snippet');
-            if (descElement) {
-              descElement.parentNode.insertBefore(queryDiv, descElement.nextSibling);
-            } else {
-              // If no description found, add after the title row
-              const titleRow = itemElement.querySelector('.item-title-row');
-              if (titleRow) {
-                titleRow.parentNode.insertBefore(queryDiv, titleRow.nextSibling);
-              }
-            }
-          }
-          
-          // Modify links to point to index.html with the site parameter
-          // Look for the url field in the item (this contains the actual site domain)
+
+          // Use URLs directly from backend (they're already constructed with nlweb_gateway)
           if (item.url) {
-            // Check if the URL from backend is already a complete URL (e.g., to nlwm.azurewebsites.net)
-            // If so, use it directly without modification
-            let indexUrl;
             const siteName = item.name || item.siteName || item.url;
-
-            if (item.url.startsWith('http://') || item.url.startsWith('https://')) {
-              // URL is already complete from backend - replace /ask? with /?
-              indexUrl = item.url.replace('/ask?', '/?');
-            } else {
-              // URL is just a domain - build local index URL
-              let siteDomain = item.url;
-              // Remove www. if present
-              siteDomain = siteDomain.replace(/^www\./, '');
-              // Remove trailing slash if present
-              siteDomain = siteDomain.replace(/\/$/, '');
-
-              // Check if this is a Shopify store based on the @type field
-              // Don't rely on URL since Shopify stores can have custom domains
-              const isShopify = item['@type'] === 'ShopifyStore' || item.type === 'ShopifyStore';
-
-              // Build the URL with parameters
-              indexUrl = `/?site=${encodeURIComponent(siteDomain)}`;
-
-              // Add the current query (the one the user searched with)
-              const currentQuery = this.queryInput.value.trim();
-              if (currentQuery) {
-                indexUrl += `&query=${encodeURIComponent(currentQuery)}`;
-              }
-
-              // Add site-specific query if different from main query
-              if (item.query && item.query !== currentQuery) {
-                // Store site-specific query as a separate parameter
-                indexUrl += `&site_query=${encodeURIComponent(item.query)}`;
-              }
-
-              // Add retrieval/backend parameter if needed
-              if (isShopify) {
-                // Add retrieval parameter to force Shopify MCP retrieval
-                indexUrl += '&retrieval=shopify';
-              }
-
-              // Add tool parameter to skip tool selection
-              indexUrl += '&tool=search';
-
-              // Add any database parameter if present
-              if (item.db || item.database) {
-                indexUrl += `&db=${encodeURIComponent(item.db || item.database)}`;
-              }
-            }
+            const siteUrl = item.url;
 
             // Find all links in the element
             const links = itemElement.querySelectorAll('a');
             links.forEach(link => {
-              // If it's a link to the site, modify it
+              // If it's a link to the site, use the backend-provided URL
               if (link.href && !link.href.startsWith('mailto:') && !link.href.startsWith('tel:')) {
-                // Use the URL we determined above
-                link.href = indexUrl;
+                link.href = siteUrl;
                 link.target = '_blank'; // Open in new tab/window
                 link.title = `Open chat with ${siteName}`;
               }
             });
-            
+
             // Also make the title clickable if it isn't already
             if (titleElement && !titleElement.querySelector('a')) {
               const titleLink = document.createElement('a');
-              titleLink.href = indexUrl;
+              titleLink.href = siteUrl;
               titleLink.target = '_blank'; // Open in new tab/window
               titleLink.title = `Open chat with ${siteName}`;
               titleLink.style.cssText = 'color: inherit; text-decoration: none;';

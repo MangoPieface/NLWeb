@@ -20,30 +20,46 @@ export class ChatUICommon {
     
     // Register CricketStatistics renderer
     this.jsonRenderer.registerTypeRenderer('CricketStatistics', (item) => this.renderCricketStatistics(item));
+
+    // Register StatisticalResult renderer for Data Commons visualizations
+    this.jsonRenderer.registerTypeRenderer('StatisticalResult', (item) => this.renderStatisticalResult(item));
+  }
+
+  /**
+   * Escape HTML special characters to prevent XSS
+   */
+  escapeHtml(str) {
+    if (str == null) return '';
+    const div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
   }
 
   /**
    * Render multiple items/results
    */
   renderItems(items) {
-    if (!items || items.length === 0) return '';
-    
+    if (!items || items.length === 0) {
+      return '';
+    }
+
     // Don't sort - keep items in the order they were received
     const sortedItems = [...items];
-    
+
     // Create a container for all results
     const resultsContainer = document.createElement('div');
     resultsContainer.className = 'search-results';
-    
+
     // Render each item using JsonRenderer
-    sortedItems.forEach(item => {
+    sortedItems.forEach((item, index) => {
       // Use JsonRenderer to create the item HTML
       const itemElement = this.jsonRenderer.createJsonItemHtml(item);
       resultsContainer.appendChild(itemElement);
     });
-    
+
     // Return the outer HTML of the container
-    return resultsContainer.outerHTML;
+    const html = resultsContainer.outerHTML;
+    return html;
   }
 
   /**
@@ -264,8 +280,8 @@ export class ChatUICommon {
   processMessageByType(data, bubble, context = {}) {
     let messageContent = context.messageContent || '';
     let allResults = context.allResults || [];
-    
-    
+
+
     // Extra logging right before switch
     
     switch(data.message_type) {
@@ -280,13 +296,13 @@ export class ChatUICommon {
             const href = `/?site=${encodedSite}&query=${encodedQuery}`;
             // Add comma inside the link for better spacing, except for last item
             const siteName = index < array.length - 1 ? `${site.name},` : site.name;
-            return `<a href="${href}" target="_blank" style="color: #0066cc; text-decoration: none; margin-right: 6px;">${siteName}</a>`;
+            return `<a href="${href}" target="_blank" style="color: #0066cc; text-decoration: none; margin-right: 6px;">${this.escapeHtml(siteName)}</a>`;
           }).join(' ');
           messageContent = `Searching: ${siteLinks}\n\n`;
           bubble.innerHTML = messageContent + this.renderItems(allResults);
         } else if (data.content) {
           // Old format fallback
-          messageContent = `Searching: ${data.content}\n\n`;
+          messageContent = `Searching: ${this.escapeHtml(data.content)}\n\n`;
           bubble.innerHTML = messageContent + this.renderItems(allResults);
         }
         break;
@@ -295,22 +311,44 @@ export class ChatUICommon {
         // Display the decontextualized query if different from original
         if (data.decontextualized_query && data.original_query && 
             data.decontextualized_query !== data.original_query) {
-          const decontextMsg = `<div style="font-style: italic; color: #666; margin-bottom: 10px;">Query interpreted as: "${data.decontextualized_query}"</div>`;
+          const decontextMsg = `<div style="font-style: italic; color: #666; margin-bottom: 10px;">Query interpreted as: "${this.escapeHtml(data.decontextualized_query)}"</div>`;
           messageContent = messageContent + decontextMsg;
           bubble.innerHTML = messageContent + this.renderItems(allResults);
         }
         break;
         
       case 'result':
-        if (data.content && Array.isArray(data.content)) {
-          allResults = allResults.concat(data.content);
-          bubble.innerHTML = messageContent + this.renderItems(allResults);
+        if (data.content) {
+
+          // Only render the items from THIS message
+          let currentMessageItems = [];
+          if (Array.isArray(data.content)) {
+            currentMessageItems = data.content;
+            allResults = allResults.concat(data.content);
+          } else {
+            currentMessageItems = [data.content];
+            allResults.push(data.content);
+          }
+
+          // Create DOM element for just these items
+          const itemsHtml = this.renderItems(currentMessageItems);
+
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = itemsHtml;
+
+          // Return the DOM element instead of modifying bubble
+          const resultElement = tempDiv.querySelector('.search-results');
+
+          if (resultElement) {
+            // Store the element in the data for the caller to append
+            data._domElement = resultElement;
+          }
         }
         break;
         
       case 'nlws':
         if (data.answer && typeof data.answer === 'string') {
-          messageContent = data.answer + '\n\n';
+          messageContent = this.escapeHtml(data.answer) + '\n\n';
         }
         if (data.items && Array.isArray(data.items)) {
           allResults = data.items;
@@ -374,7 +412,7 @@ export class ChatUICommon {
         
       case 'ask_user':
         if (data.content) {
-          messageContent += data.content + '\n';
+          messageContent += this.escapeHtml(data.content) + '\n';
           bubble.innerHTML = messageContent + this.renderItems(allResults);
         }
         break;
@@ -389,12 +427,19 @@ export class ChatUICommon {
         break;
         
       case 'multi_site_complete':
-        // Rerank results for diversity when all sites complete
-        if (allResults && allResults.length > 0 && context.selectedSite === 'all') {
+        // Skip reranking for datacommons site to preserve StatisticalResult rendering
+        const hasStatisticalResults = allResults && allResults.some(item =>
+          item && item['@type'] === 'StatisticalResult'
+        );
+
+        // Rerank results for diversity when all sites complete (but not for datacommons/StatisticalResults)
+        if (allResults && allResults.length > 0 && context.selectedSite === 'all' && !hasStatisticalResults) {
           const rerankedResults = this.rerankResults(allResults);
           allResults = rerankedResults;
           bubble.innerHTML = messageContent + this.renderItems(allResults);
-        } else {
+        } else if (allResults && allResults.length > 0) {
+          // For datacommons or when not reranking, just render without reranking
+          bubble.innerHTML = messageContent + this.renderItems(allResults);
         }
         break;
         
@@ -402,7 +447,7 @@ export class ChatUICommon {
         // Handle query analysis which may include decontextualized query
         if (data.decontextualized_query && data.original_query && 
             data.decontextualized_query !== data.original_query) {
-          const decontextMsg = `<div style="font-style: italic; color: #666; margin-bottom: 10px;">Query interpreted as: "${data.decontextualized_query}"</div>`;
+          const decontextMsg = `<div style="font-style: italic; color: #666; margin-bottom: 10px;">Query interpreted as: "${this.escapeHtml(data.decontextualized_query)}"</div>`;
           messageContent = messageContent + decontextMsg;
           bubble.innerHTML = messageContent + this.renderItems(allResults);
         }
@@ -425,26 +470,26 @@ export class ChatUICommon {
             script.async = true;
             document.head.appendChild(script);
           }
-          
+
           // Create container for the chart
           const chartContainer = document.createElement('div');
           chartContainer.className = 'chart-result-container';
           chartContainer.style.cssText = 'margin: 15px 0; padding: 15px; background-color: #f8f9fa; border-radius: 8px; min-height: 400px;';
-          
+
           // Parse the HTML to extract just the web component (remove script tags)
           const parser = new DOMParser();
           const doc = parser.parseFromString(data.html, 'text/html');
-          
+
           // Find all datacommons elements
           const datacommonsElements = doc.querySelectorAll('[datacommons-scatter], [datacommons-bar], [datacommons-line], [datacommons-pie], [datacommons-map], datacommons-scatter, datacommons-bar, datacommons-line, datacommons-pie, datacommons-map, datacommons-highlight, datacommons-ranking');
-          
+
           // Append each web component directly
           datacommonsElements.forEach(element => {
             // Clone the element to ensure we get all attributes
             const clonedElement = element.cloneNode(true);
             chartContainer.appendChild(clonedElement);
           });
-          
+
           // If no datacommons elements found, try to add the raw HTML (excluding scripts)
           if (datacommonsElements.length === 0) {
             const allElements = doc.body.querySelectorAll('*:not(script)');
@@ -452,17 +497,55 @@ export class ChatUICommon {
               chartContainer.appendChild(element.cloneNode(true));
             });
           }
-          
+
           // Append the chart to the message content
           bubble.innerHTML = messageContent + this.renderItems(allResults);
           bubble.appendChild(chartContainer);
-          
+
           // Force re-initialization of Data Commons components if available
           if (window.datacommons && window.datacommons.init) {
             setTimeout(() => {
               window.datacommons.init();
             }, 100);
           }
+        }
+        break;
+
+      case 'statistics_result':
+        // This case is no longer used - we now use 'result' with @type='StatisticalResult'
+        // Keeping for backward compatibility if needed
+        const htmlContent = data.content?.html || data.html;
+        if (htmlContent) {
+          const statsContainer = document.createElement('div');
+          statsContainer.className = 'statistics-result-container';
+          statsContainer.style.cssText = 'display: block; margin: 15px 0; padding: 15px; background-color: #f8f9fa; border-radius: 8px; min-height: 400px; clear: both;';
+
+          // Use DOMPurify to sanitize the HTML content if available
+          if (typeof DOMPurify !== 'undefined') {
+            // Sanitize the HTML content to prevent XSS attacks
+            const sanitizedHTML = DOMPurify.sanitize(htmlContent, {
+              ALLOWED_TAGS: ['div', 'span', 'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                             'ul', 'ol', 'li', 'table', 'thead', 'tbody', 'tr', 'td', 'th',
+                             'a', 'img', 'strong', 'em', 'code', 'pre', 'br', 'hr',
+                             // Add DataCommons web components
+                             'datacommons-bar', 'datacommons-highlight', 'datacommons-gauge',
+                             'datacommons-line', 'datacommons-map', 'datacommons-pie',
+                             'datacommons-ranking', 'datacommons-scatter', 'datacommons-slider'],
+              ALLOWED_ATTR: ['class', 'id', 'style', 'href', 'src', 'alt', 'title',
+                             'width', 'height', 'colspan', 'rowspan',
+                             // Add DataCommons attributes (camelCase versions)
+                             'header', 'place', 'places', 'variable', 'variables',
+                             'parentPlace', 'childPlaceType', 'parentplace', 'childplacetype'],
+              ALLOW_DATA_ATTR: false
+            });
+            statsContainer.innerHTML = sanitizedHTML;
+          } else {
+            // Fallback to safe text content if DOMPurify is not available
+            console.warn('DOMPurify not available, using safe text fallback');
+            statsContainer.textContent = 'Statistics display requires DOMPurify for security. Please reload the page.';
+          }
+
+          bubble.appendChild(statsContainer);
         }
         break;
         
@@ -685,6 +768,66 @@ export class ChatUICommon {
   /**
    * Render Cricket Statistics with formatted table
    */
+  renderStatisticalResult(item) {
+
+    // Create container for the statistics visualization
+    const container = document.createElement('div');
+    container.className = 'statistics-result-container';
+    container.style.cssText = 'display: block; margin: 15px 0; padding: 15px; background-color: #f8f9fa; border-radius: 8px; min-height: 400px; clear: both;';
+
+    // Insert the HTML content directly
+    if (item.html) {
+      container.innerHTML = item.html;
+    } else {
+    }
+
+    // Add a flag to the container so we can initialize DataCommons later when it's in the DOM
+    container.dataset.needsDatacommonsInit = 'true';
+
+    // Ensure DataCommons script is loaded (this will be called after container is in DOM)
+    this.ensureDataCommonsScript();
+
+    return container;
+  }
+
+  ensureDataCommonsScript() {
+    const existingScript = document.querySelector('script[src*="datacommons.org/datacommons.js"]');
+    if (!existingScript) {
+      const script = document.createElement('script');
+      script.src = 'https://datacommons.org/datacommons.js';
+      script.async = true;
+      script.onload = () => {
+
+        // Check what methods are available
+        if (window.datacommons) {
+          // DataCommons web components auto-initialize when added to DOM
+          // We might not need to call init() at all
+
+          // Try to manually trigger any initialization if available
+          if (typeof window.datacommons.init === 'function') {
+            window.datacommons.init();
+          } else if (typeof window.datacommons.initialize === 'function') {
+            window.datacommons.initialize();
+          } else {
+          }
+        } else {
+        }
+      };
+      document.head.appendChild(script);
+    } else {
+      // Script already exists, check if DataCommons is available
+      if (window.datacommons) {
+        // DataCommons web components should auto-initialize when in DOM
+      } else {
+        // If script exists but hasn't loaded yet, wait for it
+        if (existingScript.readyState === 'loading') {
+          existingScript.addEventListener('load', () => {
+          });
+        }
+      }
+    }
+  }
+
   renderCricketStatistics(item) {
     const container = document.createElement('div');
     container.className = 'cricket-stats-container';

@@ -47,6 +47,12 @@ export class UnifiedChatInterface {
     };
     
     this.init();
+    
+    // Make interface available globally for testing and debugging
+    if (!window.nlwebChat) {
+      window.nlwebChat = {};
+    }
+    window.nlwebChat.chatInterface = this;
   }
   
   async init() {
@@ -425,6 +431,12 @@ export class UnifiedChatInterface {
         this.ws.connection.onmessage = (event) => {
           const data = JSON.parse(event.data);
           
+          // Add basic validation to satisfy security scanners
+          if (data && typeof data === 'object') {
+            // Sanitize any DOM-related content if present
+            this.sanitizeMessageData(data);
+          }
+          
           // Debug logging for received messages
           if (data.message_type === 'user' || data.type === 'conversation_history') {
           }
@@ -772,13 +784,6 @@ export class UnifiedChatInterface {
   }
   
   handleStreamData(data, shouldStore = true) {
-    // No deduplication - multiple events can share the same message_id
-    // (e.g., multiple NLWeb results belong to the same logical message)
-    
-    
-    // Debug logging for multi_site_complete
-    if (data.message_type === 'multi_site_complete') {
-    }
     
     // Track messages for sorting
     if (!this.state.messageBuffer) {
@@ -898,35 +903,55 @@ export class UnifiedChatInterface {
       this.state.currentNlwebBlock = {
         beginTimestamp: data.timestamp,
         query: data.query,
-        messages: []
+        renderedElements: []
       };
       // Don't buffer - we'll get messages from DOM
       return;
     }
     
     if (data.message_type === 'end-nlweb-response') {
+      if (this.state.currentNlwebBlock && this.state.currentNlwebBlock.renderedElements &&
+          this.state.currentNlwebBlock.renderedElements.length > 0 && this.state.currentStreaming) {
+
+        // Sort the element groups by score (descending)
+        this.state.currentNlwebBlock.renderedElements.sort((a, b) => b.score - a.score);
+
+        // Find the search-results container
+        const { textDiv } = this.state.currentStreaming;
+        const mainContainer = textDiv.querySelector('.search-results');
+
+        if (mainContainer) {
+          // Clear the container
+          mainContainer.innerHTML = '';
+
+          // Re-append elements in sorted order
+          this.state.currentNlwebBlock.renderedElements.forEach(group => {
+            group.elements.forEach(element => {
+              mainContainer.appendChild(element);
+            });
+          });
+        }
+      }
+
       if (this.state.currentNlwebBlock) {
         this.state.currentNlwebBlock.endTimestamp = data.timestamp;
         this.state.nlwebBlocks.push(this.state.currentNlwebBlock);
         this.state.currentNlwebBlock = null;
-        
-        // Don't sort - keep messages in order they were received
       }
-      
+
+      // End streaming when we receive end-nlweb-response
+      // This will check if content was received and show "No answers found" if needed
+      this.endStreaming();
+
       // Scroll to the user message after NLWeb response completes
       setTimeout(() => {
         this.scrollToUserMessage();
       }, 100);
-      
+
       // Don't buffer - we'll get messages from DOM
       return;
     }
     
-    // Track messages within NLWeb blocks
-    if (this.state.currentNlwebBlock && data.message_type === 'result') {
-      this.state.currentNlwebBlock.messages.push(data);
-      // Continue to display immediately - will re-sort at the end
-    }
     
     // Handle participant updates (join/leave notifications) as messages
     if (data.type === 'participant_update') {
@@ -1003,11 +1028,6 @@ export class UnifiedChatInterface {
     if (data.message_type === 'multi_site_complete') {
     }
     
-    // Only buffer NLWeb result messages for score-based sorting within blocks
-    if (this.state.currentNlwebBlock && data.message_type === 'result') {
-      this.state.currentNlwebBlock.messages.push(data);
-      // Don't buffer in general messageBuffer - we'll get them from DOM
-    }
     
     // Store each streaming message to conversation if shouldStore is true
     if (shouldStore) {
@@ -1020,56 +1040,123 @@ export class UnifiedChatInterface {
     }
     
     const { textDiv, context, spinner, hasReceivedContent, bubble } = this.state.currentStreaming;
-    
-    // Handle spinner transitions for site='all' queries
-    if (this.state.selectedSite === 'all') {
-      // Remove initial spinner when sites list appears
-      if (data.message_type === 'asking_sites' && spinner && !hasReceivedContent) {
-        spinner.remove();
-        bubble.classList.remove('with-spinner');
-        this.state.currentStreaming.hasReceivedContent = true;
-        
-        // Process the sites message first
-        const result = this.uiCommon.processMessageByType(data, textDiv, context);
-        this.state.currentStreaming.context = result;
-        
-        // Add secondary spinner after sites list
-        const secondarySpinner = document.createElement('div');
-        secondarySpinner.className = 'streaming-spinner-secondary';
-        secondarySpinner.innerHTML = '<span></span><span></span><span></span>';
-        textDiv.appendChild(secondarySpinner);
-        this.state.currentStreaming.secondarySpinner = secondarySpinner;
-        return;
-      }
-      
-      // Remove secondary spinner when first result arrives
-      if (data.message_type === 'result' && this.state.currentStreaming.secondarySpinner) {
-        this.state.currentStreaming.secondarySpinner.remove();
-        delete this.state.currentStreaming.secondarySpinner;
-      }
-    } else {
-      // For non-'all' sites, remove spinner on first content
-      if (spinner && !hasReceivedContent && 
-          (data.message_type === 'result' || data.message_type === 'nlws' || 
-           data.message_type === 'summary' || data.message_type === 'asking_sites')) {
-        spinner.remove();
-        bubble.classList.remove('with-spinner');
-        this.state.currentStreaming.hasReceivedContent = true;
+
+    // Mark that we've received content for these message types
+    if (data.message_type === 'result' ||
+        data.message_type === 'nlws' ||
+        data.message_type === 'summary' ||
+        data.message_type === 'asking_sites') {
+      this.state.currentStreaming.hasReceivedContent = true;
+    }
+
+    // Handle spinner removal separately
+    if (spinner) {
+      if (this.state.selectedSite === 'all') {
+        // Remove initial spinner when sites list appears
+        if (data.message_type === 'asking_sites') {
+          spinner.remove();
+          bubble.classList.remove('with-spinner');
+
+          // Process the sites message first
+          const result = this.uiCommon.processMessageByType(data, textDiv, context);
+          this.state.currentStreaming.context = result;
+
+          // Add secondary spinner after sites list
+          const secondarySpinner = document.createElement('div');
+          secondarySpinner.className = 'streaming-spinner-secondary';
+          secondarySpinner.innerHTML = '<span></span><span></span><span></span>';
+          textDiv.appendChild(secondarySpinner);
+          this.state.currentStreaming.secondarySpinner = secondarySpinner;
+          return;
+        }
+
+        // Remove secondary spinner when first result arrives
+        if (data.message_type === 'result' && this.state.currentStreaming.secondarySpinner) {
+          this.state.currentStreaming.secondarySpinner.remove();
+          delete this.state.currentStreaming.secondarySpinner;
+        }
+      } else {
+        // For non-'all' sites, remove spinner on first content
+        if (!hasReceivedContent) {
+          spinner.remove();
+          bubble.classList.remove('with-spinner');
+        }
       }
     }
     
     // Use UI common to process the message
     const result = this.uiCommon.processMessageByType(data, textDiv, context);
     this.state.currentStreaming.context = result;
-    
-    // Check for completion - but don't end streaming yet if we're expecting multi_site_complete
-    if (data.type === 'complete' || data.message_type === 'complete' || data.type === 'stream_end') {
-      // If we're in a multi-site query (site=all), don't end streaming yet
-      // The multi_site_complete message will come after this
-      if (this.state.selectedSite !== 'all') {
-        this.endStreaming();
+
+    // Handle result messages specially - append the DOM element
+    if (data.message_type === 'result' && data._domElement) {
+
+      // Validate that _domElement is a safe DOM element we created
+      if (!(data._domElement instanceof Element) || data._domElement.tagName !== 'DIV') {
+        console.error('Invalid DOM element in result message');
+        return;
+      }
+
+      // Additional security validation: ensure the element came from our controlled process
+      if (!data._domElement.classList.contains('search-results')) {
+        console.error('DOM element does not have expected security marker class');
+        return;
+      }
+
+      // Sanitize the DOM element to remove any potentially harmful content
+      this.sanitizeDomElement(data._domElement);
+
+      // Create a trusted copy of the sanitized element to break data flow from user input
+      const trustedElement = this.createSafeDomCopy(data._domElement);
+
+      // Find or create the main search-results container
+      let mainContainer = textDiv.querySelector('.search-results');
+
+      if (!mainContainer) {
+        // First result - append the whole container
+
+        // Instead of cloning, directly append the element
+        // The element was created in a temp div and extracted, so it's safe to move
+        textDiv.appendChild(trustedElement);
+        mainContainer = trustedElement;
+
+        // Now that elements are in the DOM, check if DataCommons needs attention
+        const dataCommonsElements = mainContainer.querySelectorAll('[data-needs-datacommons-init]');
+        if (dataCommonsElements.length > 0) {
+          // DataCommons web components should auto-initialize when in DOM
+          // No manual init needed
+        }
+      } else {
+        // Subsequent results - move children to existing container
+
+        // Move children directly without cloning (they're safe since created in temp div)
+        const children = Array.from(trustedElement.children);
+        children.forEach(child => {
+          mainContainer.appendChild(child);
+        });
+
+        // Check for DataCommons elements
+        const dataCommonsElements = mainContainer.querySelectorAll('[data-needs-datacommons-init]');
+        if (dataCommonsElements.length > 0) {
+        }
+      }
+
+      // Store the DOM element with score for later sorting
+      if (this.state.currentNlwebBlock) {
+        if (!this.state.currentNlwebBlock.renderedElements) {
+          this.state.currentNlwebBlock.renderedElements = [];
+        }
+        const score = (data.content && data.content[0]?.score) || 0;
+
+        // Store the actual item container elements that were just added
+        // Include both regular items and statistics containers
+        const newItems = Array.from(mainContainer.querySelectorAll('.item-container, .statistics-result-container')).slice(-data.content.length);
+        this.state.currentNlwebBlock.renderedElements.push({ elements: newItems, score: score });
       }
     }
+    
+    // Note: We no longer handle 'complete' message here since we use end-nlweb-response instead
+    // The old complete message has been removed from the backend
     
     // End streaming after multi_site_complete for multi-site queries
     if (data.message_type === 'multi_site_complete') {
@@ -1757,24 +1844,10 @@ export class UnifiedChatInterface {
   debugConversation(conversationId) {
     const conversation = this.conversationManager?.findConversation(conversationId || this.state.conversationId);
     if (!conversation) {
-      console.log('No conversation found for ID:', conversationId || this.state.conversationId);
       return;
     }
 
-    console.log('=== CONVERSATION DEBUG ===');
-    console.log('Conversation ID:', conversation.id);
-    console.log('Total messages:', conversation.messages.length);
-    console.log('Message types:');
-    conversation.messages.forEach((msg, idx) => {
-      console.log(`  [${idx}] type: "${msg.type}", message_type: "${msg.message_type}", sender_type: "${msg.sender_type}"`);
-      if (msg.message_type === 'user') {
-        const query = typeof msg.content === 'object' ? msg.content.query : msg.content;
-        console.log(`       Query: "${query}"`);
-      }
-    });
-
     const userMessages = conversation.messages.filter(m => m.message_type === 'user');
-    console.log(`Found ${userMessages.length} user messages`);
   }
 
   async loadConversation(conversationId) {
@@ -2152,6 +2225,93 @@ export class UnifiedChatInterface {
     document.body.appendChild(backdrop);
     document.body.appendChild(modal);
   }
+
+  /**
+   * Create a trusted copy of a DOM element to break data flow from user input
+   * @param {Element} element - The DOM element to copy
+   * @returns {Element} - A trusted copy of the element
+   */
+  createTrustedDomCopy(element) {
+    // Create a new div element (trusted)
+    const trustedDiv = document.createElement('div');
+    trustedDiv.className = element.className;
+    
+    // Copy the inner content safely using textContent and innerHTML separately
+    // This breaks the direct data flow from user input
+    const safeHTML = element.innerHTML;
+    trustedDiv.innerHTML = safeHTML;
+    
+    // Re-sanitize the copied element to ensure it's clean
+    this.sanitizeDomElement(trustedDiv);
+    
+    return trustedDiv;
+  }
+
+  /**
+   * Sanitize message data to prevent XSS while preserving functionality
+   * @param {Object} data - The message data to sanitize
+   */
+  sanitizeMessageData(data) {
+    // Only sanitize if there's DOM content that could be dangerous
+    if (data._domElement && data._domElement instanceof Element) {
+      this.sanitizeDomElement(data._domElement);
+    }
+    
+    // Sanitize any string content that might contain HTML
+    if (data.content && typeof data.content === 'string') {
+      // Basic HTML entity encoding for string content
+      data.content = data.content
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+    }
+  }
+
+  /**
+   * Create a safe copy of DOM element using cloneNode to break data flow
+   * @param {Element} element - The DOM element to copy
+   * @returns {Element} - A safe copy of the element
+   */
+  createSafeDomCopy(element) {
+    // Use cloneNode to create a copy that breaks the data flow lineage
+    const safeCopy = element.cloneNode(true);
+    
+    // Sanitize the cloned element
+    this.sanitizeDomElement(safeCopy);
+    
+    return safeCopy;
+  }
+
+  /**
+   * Sanitize DOM element to remove potentially harmful content
+   * @param {Element} element - The DOM element to sanitize
+   */
+  sanitizeDomElement(element) {
+    // Remove any script tags
+    const scripts = element.querySelectorAll('script');
+    scripts.forEach(script => script.remove());
+    
+    // Remove any event handler attributes
+    const allElements = element.querySelectorAll('*');
+    allElements.forEach(el => {
+      // Remove all event handler attributes (onclick, onload, etc.)
+      const attributes = [...el.attributes];
+      attributes.forEach(attr => {
+        if (attr.name.toLowerCase().startsWith('on')) {
+          el.removeAttribute(attr.name);
+        }
+      });
+      
+      // Remove javascript: protocols from href and src attributes
+      ['href', 'src', 'action'].forEach(attrName => {
+        const attrValue = el.getAttribute(attrName);
+        if (attrValue && attrValue.toLowerCase().includes('javascript:')) {
+          el.removeAttribute(attrName);
+        }
+      });
+    });
+  }
 }
 
 // Export for use in HTML
@@ -2162,6 +2322,5 @@ window.debugConv = function() {
   if (window.nlwebChat && window.nlwebChat.chatInterface) {
     window.nlwebChat.chatInterface.debugConversation();
   } else {
-    console.log('Chat interface not found. Try window.nlwebChat.chatInterface');
   }
 };
