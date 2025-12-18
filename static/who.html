@@ -382,11 +382,20 @@
             this.eventSource.close();
           }
 
+          const debugParams = new URLSearchParams(window.location.search);
+          const queryObj = Object.fromEntries(debugParams.entries());
+
           // Create URL with query parameters
           const params = new URLSearchParams({
             query: query,
             streaming: 'true'  // Use streaming mode
           });
+          
+          // Add previous queries for context (limit to last 3 queries)
+          if (this.queryHistory.length > 0) {
+            const recentQueries = this.queryHistory.slice(-3);
+            params.append('prev_queries', JSON.stringify(recentQueries));
+          }
 
           const url = `/who?${params.toString()}`;
           

@@ -13,6 +13,10 @@ import asyncio
 import threading
 from typing import List, Optional
 import time
+import logging
+
+# Suppress gRPC ALTS credentials warning (not running on GCP)
+logging.getLogger("grpc").setLevel(logging.ERROR)
 
 import google.generativeai as genai
 from core.config import CONFIG

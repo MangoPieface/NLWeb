@@ -272,10 +272,10 @@ async def batch_get_embeddings(
             # Gemini might not have a native batch API, so process one by one
             logger.debug("Getting Gemini batch embeddings (sequential)")
             from embedding_providers.gemini_embedding import get_gemini_batch_embeddings
-            # Process texts one by one with individual timeouts
+            # Process texts one by one - use longer timeout since sequential processing with rate limits
             result = await asyncio.wait_for(
                 get_gemini_batch_embeddings(texts, model=model_id),
-                timeout=30  # Individual timeout per text
+                timeout=timeout * len(texts)  # Scale timeout with batch size
             )
             logger.debug(f"Gemini batch embeddings received, count: {len(result)}")
             return result

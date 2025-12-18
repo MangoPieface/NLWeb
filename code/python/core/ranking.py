@@ -291,7 +291,7 @@ The user's question is: {request.query}. The item's description is {item.descrip
                     self.handler.fastTrackWorked = True
                 
                 # Use the new schema to create and auto-send the message
-                create_assistant_result(json_results, handler=self.handler)
+                await create_assistant_result(json_results, handler=self.handler)
                 self.num_results_sent += len(json_results)
             except (BrokenPipeError, ConnectionResetError) as e:
                 self.handler.connection_alive_event.clear()
