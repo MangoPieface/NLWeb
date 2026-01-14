@@ -16,7 +16,7 @@ endpoints:
     llm_type: azure_openai
     models:
       high: gpt-4.1
-      low: gpt-4.1-mini
+      low: gpt-4o-mini
 
   deepseek_azure:
     api_key_env: DEEPSEEK_AZURE_API_KEY

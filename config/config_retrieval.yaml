@@ -1,4 +1,4 @@
-write_endpoint: qdrant_local
+write_endpoint: azure_ai_search
 
 endpoints:
 
@@ -7,7 +7,7 @@ endpoints:
     enabled: true
     api_key_env: AZURE_VECTOR_SEARCH_API_KEY
     api_endpoint_env: AZURE_VECTOR_SEARCH_ENDPOINT
-    index_name: embeddings1536
+    index_name: sos-sms-index
     db_type: azure_ai_search
 
   azure_ai_search_backup:
@@ -27,7 +27,7 @@ endpoints:
 
   # Bing Web Search API for real-time web search
   bing_search:
-    enabled: true
+    enabled: false
     # API key for Bing Web Search API
     api_key_env: BING_API_KEY
     # Bing API endpoint (optional, defaults to standard Bing API)
@@ -114,7 +114,7 @@ endpoints:
 
   # Option 1: Local file-based Qdrant storage
   qdrant_local:
-    enabled: true
+    enabled: false
     # Use local file-based storage with a specific path
     database_path: "../data/db"
     # Set the collection name to use
