@@ -41,7 +41,7 @@
     "clsx": "^2.1.1",
     "framer-motion": "^12.23.12",
     "immer": "^10.1.1",
-    "lodash": "^4.17.21",
+    "lodash": "^4.17.23",
     "lucide-react": "^0.536.0",
     "mapbox-gl": "^3.14.0",
     "mapbox-gl.css": "link:mapbox-gl/dist/mapbox-gl.css",
