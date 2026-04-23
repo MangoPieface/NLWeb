@@ -3,9 +3,21 @@ write_endpoint: qdrant_local
 endpoints:
 
 #Azure endpoints
-  
-  nlweb_west:
+  write_endpoint: azure_ai_search
+
+endpoints:
+
+#Azure endpoints
+  azure_ai_search:
     enabled: true
+    api_endpoint_env: AZURE_VECTOR_SEARCH_ENDPOINT
+    auth_method: AZURE_SEARCH_AUTH_METHOD
+    api_key_env: AZURE_VECTOR_SEARCH_API_KEY
+    index_name: embeddings1536
+    db_type: azure_ai_search
+
+  nlweb_west:
+    enabled: false
     api_key_env: NLWEB_WEST_API_KEY
     api_endpoint_env: NLWEB_WEST_ENDPOINT
     index_name: embeddings1536
@@ -93,7 +105,7 @@ endpoints:
 
   # Option 1: Local file-based Qdrant storage
   qdrant_local:
-    enabled: true
+    enabled: false
     # Use local file-based storage with a specific path
     database_path: "../data/db"
     # Set the collection name to use
