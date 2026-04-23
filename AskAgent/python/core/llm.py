@@ -37,12 +37,12 @@ def init():
 
 # Mapping of LLM types to their required pip packages
 _llm_type_packages = {
-    "openai": ["openai>=1.12.0"],
+    "openai": ["openai>=1.12.0,<2.0.0"],
     "anthropic": ["anthropic>=0.18.1"],
     "gemini": ["google-cloud-aiplatform>=1.38.0"],
-    "azure_openai": ["openai>=1.12.0"],
-    "llama_azure": ["openai>=1.12.0"],
-    "deepseek_azure": ["openai>=1.12.0"],
+    "azure_openai": ["openai>=1.12.0,<2.0.0"],
+    "llama_azure": ["openai>=1.12.0,<2.0.0"],
+    "deepseek_azure": ["openai>=1.12.0,<2.0.0"],
     "inception": ["aiohttp>=3.9.1"],
     "snowflake": ["httpx>=0.28.1"],
     "huggingface": ["huggingface_hub>=0.31.0"],
