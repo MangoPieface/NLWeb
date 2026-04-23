@@ -1,9 +1,4 @@
-write_endpoint: qdrant_local
-
-endpoints:
-
-#Azure endpoints
-  write_endpoint: azure_ai_search
+write_endpoint: azure_ai_search
 
 endpoints:
 
