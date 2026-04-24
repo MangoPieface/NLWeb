@@ -29,26 +29,23 @@ cd AskAgent/python || exit 1
 PYTHON_VERSION=$(python --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 echo "Python version: $PYTHON_VERSION"
 
-# Check if main packages are installed AND compatible
-PACKAGES_OK=true
-python -c "import aiohttp, openai, azure.search.documents; from openai.types.chat import ChatCompletion" 2>/dev/null || PACKAGES_OK=false
+# Check if main packages are installed
+PACKAGES_INSTALLED=true
+python -c "import aiohttp, openai, azure.search.documents" 2>/dev/null || PACKAGES_INSTALLED=false
 
-if [ "$PACKAGES_OK" = "false" ] && [ -f requirements.txt ]; then
-    # Check if openai 2.x is the specific problem
-    OPENAI_MAJOR=$(python -c "import openai; print(openai.__version__.split('.')[0])" 2>/dev/null)
-    if [ "$OPENAI_MAJOR" = "2" ]; then
-        echo "Detected incompatible openai 2.x, downgrading to 1.x..."
-        pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" "openai>=1.12.0,<2.0.0" --force-reinstall --no-deps
-        pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt --no-deps 2>/dev/null
-        echo "OpenAI downgrade complete."
+# Always check for incompatible openai 2.x even if packages appear installed
+OPENAI_MAJOR=$(python -c "import openai; print(openai.__version__.split('.')[0])" 2>/dev/null)
+if [ "$OPENAI_MAJOR" = "2" ]; then
+    echo "Detected incompatible openai 2.x ($OPENAI_MAJOR), downgrading to 1.x..."
+    pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" "openai>=1.12.0,<2.0.0" --force-reinstall
+    echo "OpenAI downgrade complete."
+elif [ "$PACKAGES_INSTALLED" = "false" ] && [ -f requirements.txt ]; then
+    echo "Installing Python dependencies (this may take a moment on first run)..."
+    if pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt; then
+        echo "Dependencies installed successfully."
     else
-        echo "Installing Python dependencies (this may take a moment on first run)..."
-        if pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt; then
-            echo "Dependencies installed successfully."
-        else
-            echo "ERROR: Failed to install dependencies"
-            exit 1
-        fi
+        echo "ERROR: Failed to install dependencies"
+        exit 1
     fi
 else
     echo "Dependencies already installed and compatible, skipping pip install."
