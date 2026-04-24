@@ -34,13 +34,21 @@ PACKAGES_OK=true
 python -c "import aiohttp, openai, azure.search.documents; from openai.types.chat import ChatCompletion" 2>/dev/null || PACKAGES_OK=false
 
 if [ "$PACKAGES_OK" = "false" ] && [ -f requirements.txt ]; then
-    echo "Installing/upgrading Python dependencies..."
-    
-    if pip install -q --upgrade --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt; then
-        echo "Dependencies installed successfully."
+    # Check if openai 2.x is the specific problem
+    OPENAI_MAJOR=$(python -c "import openai; print(openai.__version__.split('.')[0])" 2>/dev/null)
+    if [ "$OPENAI_MAJOR" = "2" ]; then
+        echo "Detected incompatible openai 2.x, downgrading to 1.x..."
+        pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" "openai>=1.12.0,<2.0.0" --force-reinstall --no-deps
+        pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt --no-deps 2>/dev/null
+        echo "OpenAI downgrade complete."
     else
-        echo "ERROR: Failed to install dependencies"
-        exit 1
+        echo "Installing Python dependencies (this may take a moment on first run)..."
+        if pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt; then
+            echo "Dependencies installed successfully."
+        else
+            echo "ERROR: Failed to install dependencies"
+            exit 1
+        fi
     fi
 else
     echo "Dependencies already installed and compatible, skipping pip install."
