@@ -36,9 +36,16 @@ python -c "import aiohttp, openai, azure.search.documents" 2>/dev/null || PACKAG
 # Always check for incompatible openai 2.x even if packages appear installed
 OPENAI_MAJOR=$(python -c "import openai; print(openai.__version__.split('.')[0])" 2>/dev/null)
 if [ "$OPENAI_MAJOR" = "2" ]; then
-    echo "Detected incompatible openai 2.x ($OPENAI_MAJOR), downgrading to 1.x..."
-    pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" "openai>=1.12.0,<2.0.0" --force-reinstall
-    echo "OpenAI downgrade complete."
+    echo "Detected incompatible openai 2.x, removing and reinstalling 1.x..."
+    # Must physically remove old 2.x files — pip --target doesn't clean up
+    rm -rf /home/.python-packages/openai /home/.python-packages/openai-*.dist-info 2>/dev/null || true
+    # Also check Oryx build location (may be read-only, ignore errors)
+    SITE_PKGS=$(python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+    if [ -n "$SITE_PKGS" ]; then
+        rm -rf "$SITE_PKGS/openai" "$SITE_PKGS"/openai-*.dist-info 2>/dev/null || true
+    fi
+    pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" "openai>=1.12.0,<2.0.0"
+    echo "OpenAI 1.x installed. Version: $(python -c 'import openai; print(openai.__version__)')"
 elif [ "$PACKAGES_INSTALLED" = "false" ] && [ -f requirements.txt ]; then
     echo "Installing Python dependencies (this may take a moment on first run)..."
     if pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt; then
