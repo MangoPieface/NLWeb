@@ -29,21 +29,21 @@ cd AskAgent/python || exit 1
 PYTHON_VERSION=$(python --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 echo "Python version: $PYTHON_VERSION"
 
-# Quick check if main packages are already installed
-PACKAGES_INSTALLED=true
-python -c "import aiohttp, openai, azure.search.documents" 2>/dev/null || PACKAGES_INSTALLED=false
+# Check if main packages are installed AND compatible
+PACKAGES_OK=true
+python -c "import aiohttp, openai, azure.search.documents; from openai.types.chat import ChatCompletion" 2>/dev/null || PACKAGES_OK=false
 
-if [ "$PACKAGES_INSTALLED" = "false" ] && [ -f requirements.txt ]; then
-    echo "Installing Python dependencies (this may take a moment on first run)..."
+if [ "$PACKAGES_OK" = "false" ] && [ -f requirements.txt ]; then
+    echo "Installing/upgrading Python dependencies..."
     
-    if pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt; then
+    if pip install -q --upgrade --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt; then
         echo "Dependencies installed successfully."
     else
         echo "ERROR: Failed to install dependencies"
         exit 1
     fi
 else
-    echo "Dependencies already installed, skipping pip install."
+    echo "Dependencies already installed and compatible, skipping pip install."
 fi
 
 # Quick verification without verbose output
