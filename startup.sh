@@ -3,14 +3,14 @@
 # Azure Web App startup script for aiohttp server
 echo "Starting NLWeb application..."
 
-# Set Python path
-export PYTHONPATH=/home/site/wwwroot:$PYTHONPATH
+# Set Python path (include writable package dir for runtime-installed deps)
+export PYTHONPATH=/home/.python-packages:/home/site/wwwroot:$PYTHONPATH
 
 # Ensure Python output is unbuffered for immediate log visibility
 export PYTHONUNBUFFERED=1
 
-# Set pip cache directory for persistence across restarts
-export PIP_CACHE_DIR=/home/site/wwwroot/.pip-cache
+# Set pip cache directory under /home (wwwroot may be read-only with run-from-package)
+export PIP_CACHE_DIR=/home/.pip-cache
 mkdir -p "$PIP_CACHE_DIR"
 
 # Navigate to app directory
@@ -29,21 +29,33 @@ cd AskAgent/python || exit 1
 PYTHON_VERSION=$(python --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 echo "Python version: $PYTHON_VERSION"
 
-# Quick check if main packages are already installed
+# Check if main packages are installed
 PACKAGES_INSTALLED=true
 python -c "import aiohttp, openai, azure.search.documents" 2>/dev/null || PACKAGES_INSTALLED=false
 
-if [ "$PACKAGES_INSTALLED" = "false" ] && [ -f requirements.txt ]; then
+# Always check for incompatible openai 2.x even if packages appear installed
+OPENAI_MAJOR=$(python -c "import openai; print(openai.__version__.split('.')[0])" 2>/dev/null)
+if [ "$OPENAI_MAJOR" = "2" ]; then
+    echo "Detected incompatible openai 2.x, removing and reinstalling 1.x..."
+    # Must physically remove old 2.x files — pip --target doesn't clean up
+    rm -rf /home/.python-packages/openai /home/.python-packages/openai-*.dist-info 2>/dev/null || true
+    # Also check Oryx build location (may be read-only, ignore errors)
+    SITE_PKGS=$(python -c "import site; print(site.getsitepackages()[0])" 2>/dev/null)
+    if [ -n "$SITE_PKGS" ]; then
+        rm -rf "$SITE_PKGS/openai" "$SITE_PKGS"/openai-*.dist-info 2>/dev/null || true
+    fi
+    pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" "openai>=1.12.0,<2.0.0"
+    echo "OpenAI 1.x installed. Version: $(python -c 'import openai; print(openai.__version__)')"
+elif [ "$PACKAGES_INSTALLED" = "false" ] && [ -f requirements.txt ]; then
     echo "Installing Python dependencies (this may take a moment on first run)..."
-    
-    if pip install -q --cache-dir="$PIP_CACHE_DIR" -r requirements.txt; then
+    if pip install -q --cache-dir="$PIP_CACHE_DIR" --target="/home/.python-packages" -r requirements.txt; then
         echo "Dependencies installed successfully."
     else
         echo "ERROR: Failed to install dependencies"
         exit 1
     fi
 else
-    echo "Dependencies already installed, skipping pip install."
+    echo "Dependencies already installed and compatible, skipping pip install."
 fi
 
 # Quick verification without verbose output
