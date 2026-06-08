@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Sites>
-
+  <Site name="BowelCancerUK">
+    <itemType>Article</itemType>
+    <description>Bowel Cancer UK - information and resources about bowel cancer</description>
+  </Site>
 </Sites>
